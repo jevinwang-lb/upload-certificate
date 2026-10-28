@@ -1,157 +1,117 @@
 # upload-certificate
 
-批量把 `.pfx / .p12` 证书上传到 Octopus Deploy（CRM Space）。只依赖 Python 3 标准库，本机有 `openssl` 时会顺带预检密码、读 CN / 到期日。
-
-## 准备
+批量把证书上传到 Octopus Deploy（CRM Space）。只依赖 Python 3 标准库 + 本机 `openssl`。
 
 ```bash
-cp .env.example .env     # 填 PFX_PASSWORD 和 OCTOPUS_API_KEY
+cp .env.example .env          # 填 PFX_PASSWORD 和 OCTOPUS_API_KEY
+python3 upload_certs.py tmgm-domain-20261028 --tenant TMGM --check      # 1. 体检
+python3 upload_certs.py tmgm-domain-20261028 --tenant TMGM --dry-run    # 2. 看计划
+python3 upload_certs.py tmgm-domain-20261028 --tenant TMGM              # 3. 真跑
 ```
 
-| 变量                | 说明                                                  |
-| ------------------- | ----------------------------------------------------- |
-| `PFX_PASSWORD`      | 证书统一密码（清单里可逐张覆盖）                      |
-| `OCTOPUS_API_KEY`   | Octopus API Key，需要 Certificate 的 Create/Edit 权限 |
-| `OCTOPUS_URL`       | 默认 `https://crm-nonprod-octopus.lifebyte.io`        |
-| `OCTOPUS_SPACE`     | 默认 `Spaces-82`（CRM）                               |
-| `OCTOPUS_CA_BUNDLE` | 选填，自定义根证书 PEM 路径                           |
+## 参数一览
 
-## 多个 Octopus 实例 / 多个 Space
+| 参数 | 作用 | 例子 |
+| --- | --- | --- |
+| `dir` | 证书目录，平铺 pfx 或按域名分文件夹 | `python3 upload_certs.py ./certs` |
+| `--manifest` `-m` | 用 CSV 清单代替目录，逐张指定（见 `certs.csv.example`） | `-m certs.csv` |
+| `--check` | 只体检不上传，每张一行，有异常退出码非 0 | `--check --check-out check.csv` |
+| `--check-out` | 体检结果另存 CSV（带 BOM，Excel 不乱码） | `--check-out check.csv` |
+| `--warn-days` | 体检时剩余天数少于此值算异常，默认 30 | `--warn-days 15` |
+| `--dry-run` | 只打印计划，不写 Octopus，不写日志 | `--dry-run` |
+| `--env` | 新建证书的环境，可重复，默认 PROD | `--env DEV --env QA` |
+| `--tenant` | 新建证书的 Tenant，可重复 | `--tenant TMGM` |
+| `--tenant-tag` | Tenant Tag；默认按环境自动加 `Environment Tags/<ENV>`，传 `''` 不加 | `--tenant-tag 'CRM-Tag/Web'` |
+| `--name-template` | 域名文件夹模式下的证书名，默认 `star_{domain_us}` | `--name-template 'le_{domain_us}'` |
+| `--notes` | 新建证书的 Notes，`auto` 自动生成，也可用模板 | `--notes auto` |
+| `--password` | PFX 密码，默认读 `.env` 的 `PFX_PASSWORD` | `--password xxx` |
+| `--on-exists` | 同名已存在时：`replace`（默认）/ `skip` / `fail` | `--on-exists skip` |
+| `--replace-only` | 只续期，不存在的名字报失败不新建 | `--replace-only` |
+| `--force-replace` | 域名不一致也强制 replace（默认拒绝） | `--force-replace` |
+| `--write-pfx` | 从 pem 打包的 pfx 写回域名文件夹（默认放临时目录，退出即删） | `--write-pfx` |
+| `--log` | 操作日志路径，默认 `logs/upload.log` | `--log /share/upload.log` |
+| `--no-log` | 不写操作日志 | `--no-log` |
+| `--env-file` | 配置文件，默认 `.env`；多个 Octopus 一人一个 | `--env-file .env.prod` |
+| `--octopus-url` | 临时覆盖 `OCTOPUS_URL` | `--octopus-url https://...` |
+| `--space` | 临时覆盖 `OCTOPUS_SPACE` | `--space Spaces-82` |
+| `--no-verify` | 跳过本机 openssl 预检 | `--no-verify` |
 
-一个实例一个配置文件，用 `--env-file` 切换，默认读 `.env`：
+`.env` 变量：`PFX_PASSWORD`、`OCTOPUS_API_KEY`（需 Certificate Create/Edit 权限）、`OCTOPUS_URL`（默认 crm-nonprod）、`OCTOPUS_SPACE`（默认 Spaces-82）、`OCTOPUS_CA_BUNDLE`（选填）。
 
-```bash
-cp .env.example .env.nonprod   # crm-nonprod-octopus，Spaces-82
-cp .env.example .env.prod      # 正式 Octopus 的地址、Space 和 API Key
+## 目录格式
 
-python3 upload_certs.py ./certs --tenant TMGM --env-file .env.nonprod --dry-run
-python3 upload_certs.py ./certs --tenant TMGM --env-file .env.prod    --dry-run
-```
-
-临时换 Space 或地址也可以直接用 `--space Spaces-xx`、`--octopus-url https://...` 覆盖配置文件里的值。
-`.env.*` 已在 `.gitignore` 里，不会被提交。
-
-## 用法
-
-先 `--dry-run` 看计划，确认无误再去掉。
-
-**方式一：一个目录，统一作用域**（证书名 = 文件名去掉后缀）
-
-```bash
-python3 upload_certs.py ./certs --tenant TMGM --env PROD --dry-run
-python3 upload_certs.py ./certs --tenant TMGM --env PROD
-```
-
-**方式二：CSV 清单，逐张指定**（参考 `certs.csv.example`）
-
-```bash
-cp certs.csv.example certs.csv   # 编辑
-python3 upload_certs.py --manifest certs.csv --dry-run
-python3 upload_certs.py --manifest certs.csv
-```
-
-清单列：`file,name,environments,tenants,tenant_tags,password,notes`。多值用 `;` 分隔；留空走默认。
-`tenant_tags` 不填时自动按环境加 `Environment Tags/<ENV>`，填 `-` 表示不加 tag。
-
-## 上传前先体检：`--check`
-
-只检测不上传，每张证书一行，有任何异常退出码非 0：
-
-```bash
-python3 upload_certs.py tmgm-domain-20261028 --tenant TMGM --check --check-out check.csv
-```
-
-| 列        | 检查内容                                                            |
-| --------- | ------------------------------------------------------------------- |
-| files     | 文件夹里 cert / chain / fullchain / privkey / pfx 哪些在            |
-| pfx_pw    | pfx 密码对不对（`ok(legacy)` 表示老式 RC2 加密，能用）              |
-| key_match | privkey.pem 和证书是否一对                                          |
-| chain     | fullchain 能否验证到系统根证书                                      |
-| domain_ok | 证书的 CN / SAN 是否包含文件夹名的域名                              |
-| days_left | 剩余天数，少于 `--warn-days`（默认 30）算异常，已过期也算           |
-| octopus   | 同名证书现状（ID、到期、签发方），或同指纹是否已用别的名字存在      |
-| action    | 真跑时会做什么：create / replace / skip-same / REFUSE（域名不一致） |
-| problems  | 所有异常汇总，`ok` 表示这张没问题                                   |
-
-另外还会查：pfx 里有没有私钥、pfx 和 cert.pem 是不是同一张、生效时间是否在未来。
-`--check-out` 写出的 CSV 带 BOM，Excel 直接打开不乱码。
-
-## Notes
-
-默认空。加 `--notes auto` 自动生成，格式：
+**按域名分文件夹**（certbot 导出那种，推荐）：
 
 ```txt
-Let's Encrypt 通配符 | *.tm-fxzho.com, tm-fxzho.com | 批次 domains1028 | 2026-10-28 upload_certs.py 上传
-```
-
-也可以自定义模板：`--notes "LE for {domains}, batch {batch}"`，占位符有 `{issuer}` `{domains}` `{wildcard}` `{batch}` `{date}`。
-清单模式的 `notes` 列同样支持这些占位符。Notes 只在新建时写入，续期不会改。
-故意不放到期日：Octopus 自己会显示，写进 Notes 续期后反而变成错的。
-
-## 操作日志
-
-真正改动 Octopus 的每一张证书都追加一行到 `logs/upload.log`（带时间戳，不覆盖），`--dry-run` / `--check` 不写：
-
-```txt
-2026-10-28 15:30:35  create   star_tm-fxzho_com  Certificates-1334  octopus=crm-nonprod-octopus.lifebyte.io space=Spaces-82 batch=tmgm-domain-20261028 file=tm-fxzho.com.pfx thumb=7B9E…3D exp=2027-01-25 env=PROD tenants=TMGM tags=Environment Tags/PROD
-2026-10-28 15:30:35  replace  star_tmxgm_com     Certificates-890   octopus=crm-nonprod-octopus.lifebyte.io space=Spaces-82 batch=tmgm-domain-20261028 file=tmxgm.com.pfx old_thumb=2C4F…A1 new_thumb=7B9E…3D old_exp=2040-04-04 new_exp=2027-01-25
-2026-10-28 15:30:36  FAILED   star_x_com         -                  octopus=... batch=tmgm-domain-20261028 error=密码错误 (MAC verify failure)
-```
-
-replace 会记下**旧证书的指纹和到期日**，要回退时拿 `old_thumb` 去 Octopus 的归档列表（勾 Include archived）找那张即可。
-换路径用 `--log 路径`，不想写用 `--no-log`。`logs/` 已在 `.gitignore`。
-
-## 同名证书已存在时
-
-| 情况                 | 动作                                                                              |
-| -------------------- | --------------------------------------------------------------------------------- |
-| 指纹相同             | 跳过                                                                              |
-| 指纹不同（续期）     | 调 `replace`：**ID 不变**，引用它的变量 / 部署步骤不用改，旧证书自动归档          |
-| 指纹不同、域名不一致 | 拒绝 replace 并报失败，防止文件放错把别的域名顶上去；确认无误加 `--force-replace` |
-| `--on-exists skip`   | 跳过                                                                              |
-| `--on-exists fail`   | 报错                                                                              |
-| `--replace-only`     | 只续期，不存在的名字报失败不新建                                                  |
-
-## 现有命名约定（Space-82）
-
-- 名字：`star_<域名，点换下划线>`，如 `*.tmgm.com` → `star_tmgm_com`
-- 作用域：绝大多数是 `PROD` 环境 + 品牌 Tenant（TMGM / DLS / ANZO…）+ tag `Environment Tags/PROD`
-- 把 pfx 按这个规则命名放进目录即可，脚本自动套用
-
-## 注意
-
-- `.env`、`certs/`、`*.pfx` 已在 `.gitignore`，不要提交
-- 全部失败/成功都会在末尾打汇总表，有失败则退出码非 0
-- 续期（replace）只换证书内容和密码，环境 / Tenant / Tag / Notes 一律沿用 Octopus 里已有的，命令行给的 `--env`、`--tenant` 只对新建生效
-- 从 pem 临时打包的 pfx 放在系统临时目录，脚本退出时自动删除
-
-## 目录按域名分文件夹（certbot 导出那种）也能直接用
-
-```bash
 tmgm-domain-20261028/
   tmxgm.com/        cert.pem chain.pem fullchain.pem privkey.pem [fullchain.pfx]
   tmgm-asia.com/    ...
 ```
 
-```bash
-python3 upload_certs.py tmgm-domain-20261028 --tenant TMGM --dry-run
-```
+- 证书名 = `star_<域名，点换下划线>`，`tmxgm.com` → `star_tmxgm_com`，和 Space-82 现有命名一致
+- 有 pfx 直接用，没有就用 `fullchain.pem + privkey.pem` 现场打包；老式 RC2 加密的 pfx 自动兼容
 
-- 证书名按 `--name-template` 生成，默认 `star_{domain_us}`，即 `tmxgm.com` → `star_tmxgm_com`
-- 文件夹里有 `fullchain.pfx` 就直接用；没有就用 `fullchain.pem + privkey.pem` 现场打包（AES-256，密码用 `PFX_PASSWORD`）。加 `--write-pfx` 可把打好的 pfx 写回文件夹
-- 老式 RC2 加密的 pfx（新版 openssl 要 `-legacy` 才能读）脚本会自动兼容
+**平铺 pfx**：`certs/star_tmxgm_com.pfx`，证书名 = 文件名去后缀。
 
-### 从 certbot 服务器拷证书的正确姿势
+**CSV 清单**：列 `file,name,environments,tenants,tenant_tags,password,notes`，多值用 `;`，留空走默认，`tenant_tags` 填 `-` 表示不加。
 
-`/etc/letsencrypt/live/<域名>/` 里的四个 pem 都是**软链接**，指向 `../../archive/<域名>/xxx1.pem`。
-只拷 `live/` 的话链接全部失效，`ls` 看得到、`cat` 读不到，脚本会报"pem 是失效的软链接"。
+### 从 certbot 拷证书
+
+`live/` 下的 pem 都是软链接，只拷 `live/` 会全部失效（`ls` 看得到、`cat` 读不到）。用 `-L` 跟随链接：
 
 ```bash
-# 推荐：-L 跟随软链接，拷出真实文件
 cp -rL /etc/letsencrypt/live/ ./tmgm-domain-$(date +%Y%m%d)/
-# 或者 rsync
-rsync -aL server:/etc/letsencrypt/live/ ./tmgm-domain-$(date +%Y%m%d)/
-# 或者连 archive/ 一起拷，保持相对路径结构
+# 或 rsync -aL server:/etc/letsencrypt/live/ ./tmgm-domain-$(date +%Y%m%d)/
 ```
 
-拷完先跑 `--check`，`files` 列里出现"软链接失效"就是没拷对。
+拷完跑 `--check`，`files` 列出现"软链接失效"就是没拷对。
+
+## 同名证书已存在时
+
+| 情况 | 动作 |
+| --- | --- |
+| 指纹相同 | 跳过 |
+| 指纹不同、域名一致（续期） | `replace`：**ID 不变**，环境 / Tenant / Tag / Notes 沿用 Octopus 现有的，旧证书自动归档 |
+| 指纹不同、域名不一致 | 拒绝并报失败，防止文件放错顶掉别的域名；确认无误加 `--force-replace` |
+
+续期时命令行的 `--env` `--tenant` `--notes` 不起作用，只对新建生效。
+
+## `--check` 查什么
+
+files（pem / pfx 齐不齐、软链接是否失效）、pfx_pw（密码对不对）、key_match（私钥和证书是否一对）、chain（能否验到根证书）、domain_ok（CN / SAN 是否含文件夹域名）、days_left、octopus（同名证书现状，或同指纹是否已用别的名字存在）、action（真跑会 create / replace / skip-same / REFUSE）。
+
+## 操作日志
+
+真正改动 Octopus 的每张证书追加一行到 `logs/upload.log`，`--dry-run` / `--check` 不写，`logs/` 不提交：
+
+```txt
+2026-10-28 15:30:35  create   star_tm-fxzho_com  Certificates-1334  octopus=crm-nonprod-octopus.lifebyte.io space=Spaces-82 batch=tmgm-domain-20261028 file=tm-fxzho.com.pfx thumb=7B9E…3D exp=2027-01-25 env=PROD tenants=TMGM tags=Environment Tags/PROD
+2026-10-28 15:30:35  replace  star_tmxgm_com     Certificates-890   octopus=crm-nonprod-octopus.lifebyte.io space=Spaces-82 batch=tmgm-domain-20261028 file=tmxgm.com.pfx old_thumb=2C4F…A1 new_thumb=7B9E…3D old_exp=2040-04-04 new_exp=2027-01-25
+```
+
+replace 记下旧指纹和旧到期日，要回退时拿 `old_thumb` 去 Octopus 归档列表（勾 Include archived）找那张，导出后再 replace 回去。
+
+## Notes
+
+默认空。`--notes auto` 生成：
+
+```txt
+Let's Encrypt 通配符 | *.tm-fxzho.com, tm-fxzho.com | 批次 tmgm-domain-20261028 | 2026-10-28 upload_certs.py 上传
+```
+
+自定义模板占位符：`{issuer}` `{domains}` `{wildcard}` `{batch}` `{date}`。故意不放到期日，Octopus 自己会显示，续期后写在 Notes 里反而是错的。
+
+## 多个 Octopus 实例
+
+一个实例一个配置文件：
+
+```bash
+cp .env.example .env.prod      # 正式 Octopus 的地址、Space、API Key
+python3 upload_certs.py ./certs --tenant TMGM --env-file .env.prod --dry-run
+```
+
+## 注意
+
+- `.env`、`.env.*`、`*.pfx`、`*.pem`、证书目录、`logs/` 都在 `.gitignore`，不要提交
+- 末尾打汇总表，有失败退出码非 0
+- 从 pem 临时打包的 pfx 含私钥，放系统临时目录，脚本退出时自动删除
