@@ -80,7 +80,7 @@ python3 upload_certs.py tmgm-domain-20261028 --tenant TMGM --check --check-out c
 
 默认空。加 `--notes auto` 自动生成，格式：
 
-```
+```txt
 Let's Encrypt 通配符 | *.tm-fxzho.com, tm-fxzho.com | 批次 domains1028 | 2026-10-28 upload_certs.py 上传
 ```
 
