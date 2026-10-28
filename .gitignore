@@ -1,0 +1,16 @@
+.env
+certs/
+*.pfx
+*.p12
+*.pem
+*.key
+certs.csv
+__pycache__/
+
+# 证书原始目录（含私钥），绝不提交
+tmgm-domain-*/
+*-domain-*/
+.DS_Store
+.env.*
+!.env.example
+domains*/

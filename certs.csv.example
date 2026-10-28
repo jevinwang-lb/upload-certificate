@@ -1,0 +1,4 @@
+﻿file,name,environments,tenants,tenant_tags,password,notes
+certs/star_example_com.pfx,star_example_com,PROD,TMGM,Environment Tags/PROD,,
+certs/star_another_com.pfx,,PROD,DLS,,,留空的列走默认：name=文件名、tenant_tags 自动为 Environment Tags/<ENV>、password 用 .env 的 PFX_PASSWORD；tenant_tags 填 - 表示不加 tag
+certs/star_uat_com.pfx,star_uat_com,DEV;UAT;PROD,TMGM;DLS;ANZO,Environment Tags/PROD,另一个密码,多值用 ; 分隔
