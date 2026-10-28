@@ -31,6 +31,7 @@ import ssl
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -460,6 +461,25 @@ def build_pfx_from_pem(folder: Path, out: Path, password: str):
 AUTO_NOTES = "{issuer}{wildcard} | {domains} | 批次 {batch} | {date} upload_certs.py 上传"
 
 
+class UploadLog:
+    """追加式操作日志，一张证书一行，只在真正改动 Octopus 时写。"""
+
+    def __init__(self, path, url, space):
+        self.path = Path(path) if path else None
+        self.ctx = f"octopus={url.split('//')[-1]} space={space}"
+        if self.path:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def write(self, action, name, cert_id, **fields):
+        if not self.path:
+            return
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        kv = " ".join(f"{k}={v}" for k, v in fields.items() if v not in (None, "", []))
+        line = f"{ts}  {action:<8} {name}  {cert_id}  {self.ctx} {kv}".rstrip()
+        with self.path.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+
+
 def render_notes(template: str, info, job) -> str:
     """--notes 支持 {issuer} {domains} {wildcard} {batch} {date} 占位符；'auto' 等于 AUTO_NOTES。"""
     if not template:
@@ -597,6 +617,9 @@ def main():
     ap.add_argument("--no-verify", action="store_true", help="跳过本机 openssl 密码预检")
     ap.add_argument("--name-template", default="star_{domain_us}",
                     help="域名子文件夹模式下的证书名模板，可用 {domain} {domain_us}；默认 star_{domain_us}")
+    ap.add_argument("--log", default="logs/upload.log",
+                    help="操作日志路径（追加写，带时间戳），默认 logs/upload.log；--dry-run / --check 不写")
+    ap.add_argument("--no-log", action="store_true", help="不写操作日志")
     ap.add_argument("--write-pfx", action="store_true",
                     help="域名子文件夹模式下，没有 pfx 的从 pem 打包后把 fullchain.pfx 写回该文件夹（默认只放临时目录）")
     args = ap.parse_args()
@@ -634,6 +657,11 @@ def main():
     print(f"已有证书 {len(existing)} 张，环境 {len(rs.env_by_name)} 个，Tenant {len(rs.tenant_by_name)} 个\n")
 
     jobs = jobs_from_manifest(Path(args.manifest), args) if args.manifest else jobs_from_dir(Path(args.dir), args)
+    batch = Path(args.manifest or args.dir).name
+    writing = not (args.dry_run or args.check or args.no_log)
+    log = UploadLog(args.log if writing else None, url, space)
+    if writing:
+        print(f"操作日志: {log.path}")
 
     if args.check:
         sys.exit(run_check(jobs, by_name, by_thumb, args))
@@ -667,16 +695,16 @@ def main():
             tenanted = "Tenanted" if (tenant_ids or tag_names) else "Untenanted"
 
             b64 = base64.b64encode(p.read_bytes()).decode()
+            fp = thumbprint(p, pw) if shutil.which("openssl") else None
+            fp = fp.upper() if fp else None
+            exp = (info or {}).get("notAfter")
             old = by_name.get(j["name"].lower())
             scope = f"env={j['environments']} tenants={j['tenants']} tags={tag_names}"
 
             if old:
                 # 同名已存在
-                same = False
-                if shutil.which("openssl"):
-                    # 用 thumbprint 比对：openssl 能算 SHA1 指纹时才比较
-                    fp = thumbprint(p, pw)
-                    same = bool(fp) and fp.upper() == (old.get("Thumbprint") or "").upper()
+                # 用 thumbprint 比对：openssl 能算 SHA1 指纹时才比较
+                same = bool(fp) and fp == (old.get("Thumbprint") or "").upper()
                 if same:
                     print(f"{tag} 已存在且内容相同 ({old['Id']})，跳过")
                     results.append((j["name"], "skip-same", old["Id"])); continue
@@ -699,6 +727,9 @@ def main():
                 if not args.dry_run:
                     new = octo.replace_certificate(old["Id"], b64, pw)
                     print(f"{tag}   -> 完成 {new['Id']}  新到期 {(new.get('NotAfter') or '')[:10]}")
+                    log.write("replace", j["name"], new["Id"], batch=batch, file=p.name,
+                              old_thumb=old.get("Thumbprint"), new_thumb=new.get("Thumbprint") or fp,
+                              old_exp=(old.get("NotAfter") or "")[:10], new_exp=(new.get("NotAfter") or "")[:10])
                     results.append((j["name"], "replaced", new["Id"]))
                 else:
                     results.append((j["name"], "would-replace", old["Id"]))
@@ -707,10 +738,7 @@ def main():
             if args.replace_only:
                 raise RuntimeError("Octopus 里没有这个名字的证书（--replace-only 不新建）")
 
-            dup = None
-            if shutil.which("openssl"):
-                fp = thumbprint(p, pw)
-                dup = by_thumb.get(fp.upper()) if fp else None
+            dup = by_thumb.get(fp) if fp else None
             if dup:
                 print(f"{tag} 注意: 相同指纹的证书已存在，名字是 {dup['Name']} ({dup['Id']})，仍将按新名字创建")
 
@@ -731,12 +759,16 @@ def main():
             if not args.dry_run:
                 new = octo.create_certificate(payload)
                 print(f"{tag}   -> 完成 {new['Id']}  CN={new.get('SubjectCommonName')}  到期 {(new.get('NotAfter') or '')[:10]}")
+                log.write("create", j["name"], new["Id"], batch=batch, file=p.name,
+                          thumb=new.get("Thumbprint") or fp, exp=(new.get("NotAfter") or "")[:10],
+                          env=",".join(j["environments"]), tenants=",".join(j["tenants"]), tags=",".join(tag_names))
                 by_name[j["name"].lower()] = new
                 results.append((j["name"], "created", new["Id"]))
             else:
                 results.append((j["name"], "would-create", "-"))
         except Exception as ex:
             print(f"{tag} 失败: {ex}", file=sys.stderr)
+            log.write("FAILED", j["name"], "-", batch=batch, error=str(ex).replace("\n", " "))
             results.append((j["name"], "FAILED", str(ex)))
 
     print("\n==== 汇总 ====")

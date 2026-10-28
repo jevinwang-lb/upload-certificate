@@ -88,6 +88,19 @@ Let's Encrypt 通配符 | *.tm-fxzho.com, tm-fxzho.com | 批次 domains1028 | 20
 清单模式的 `notes` 列同样支持这些占位符。Notes 只在新建时写入，续期不会改。
 故意不放到期日：Octopus 自己会显示，写进 Notes 续期后反而变成错的。
 
+## 操作日志
+
+真正改动 Octopus 的每一张证书都追加一行到 `logs/upload.log`（带时间戳，不覆盖），`--dry-run` / `--check` 不写：
+
+```txt
+2026-10-28 15:30:35  create   star_tm-fxzho_com  Certificates-1334  octopus=crm-nonprod-octopus.lifebyte.io space=Spaces-82 batch=tmgm-domain-20261028 file=tm-fxzho.com.pfx thumb=7B9E…3D exp=2027-01-25 env=PROD tenants=TMGM tags=Environment Tags/PROD
+2026-10-28 15:30:35  replace  star_tmxgm_com     Certificates-890   octopus=crm-nonprod-octopus.lifebyte.io space=Spaces-82 batch=tmgm-domain-20261028 file=tmxgm.com.pfx old_thumb=2C4F…A1 new_thumb=7B9E…3D old_exp=2040-04-04 new_exp=2027-01-25
+2026-10-28 15:30:36  FAILED   star_x_com         -                  octopus=... batch=tmgm-domain-20261028 error=密码错误 (MAC verify failure)
+```
+
+replace 会记下**旧证书的指纹和到期日**，要回退时拿 `old_thumb` 去 Octopus 的归档列表（勾 Include archived）找那张即可。
+换路径用 `--log 路径`，不想写用 `--no-log`。`logs/` 已在 `.gitignore`。
+
 ## 同名证书已存在时
 
 | 情况                 | 动作                                                                              |
