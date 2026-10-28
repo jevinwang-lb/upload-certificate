@@ -17,3 +17,6 @@ domains*/
 
 # 操作日志
 logs/
+
+# --check-out 输出
+check*.csv
