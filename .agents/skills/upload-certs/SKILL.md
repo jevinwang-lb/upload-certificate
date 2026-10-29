@@ -13,15 +13,19 @@ description: 把一批 SSL 证书（certbot 目录或 pfx）上传 / 续期到 O
 
 1. **确认目录**：`ls <目录>` 看是平铺 pfx 还是按域名分文件夹。每个文件夹里应有 `fullchain.pem + privkey.pem`，或 `*.pfx`。缺的要告诉用户。
 2. **体检**：
+
    ```bash
    python3 upload_certs.py <目录> --tenant <TENANT> --check --check-out check.csv
    ```
+
    看最后一行"共 N 张，异常 M 张"。有异常先逐条解释原因再往下走，不要带着异常上传。
    `action` 列是 `replace` 的，说明 Octopus 已有同名证书，要告诉用户哪几张会被顶替、原证书是谁签的、何时到期。
 3. **看计划**：
+
    ```bash
    python3 upload_certs.py <目录> --tenant <TENANT> [--env ENV] [--notes auto] --dry-run
    ```
+
    把汇总表贴给用户：几张 would-create、几张 would-replace、几张 skip-same。
 4. **等用户确认**。用户没说"可以""执行""上传"之类的明确话，不要进入第 5 步。
 5. **真跑**：去掉 `--dry-run`，其他参数不变。
@@ -52,12 +56,12 @@ python3 upload_certs.py <目录> --tenant TMGM --env DEV --name-template 'test00
 
 ## 常见报错
 
-| 现象 | 原因 / 处理 |
-| --- | --- |
-| `目录不存在: xxx（当前目录下有: ...）` | 目录名打错，按提示改 |
-| `缺少 OCTOPUS_API_KEY` | `.env` 没配，或 `--env-file` 指错文件 |
-| files 列"软链接失效" | 从 certbot 只拷了 `live/`，重新 `cp -rL` |
-| pfx_pw `WRONG` | `.env` 的 `PFX_PASSWORD` 和这张 pfx 不一致 |
-| pfx_pw `ok(legacy)` | 正常，老式加密，脚本已兼容 |
-| `域名不一致 ... 已拒绝 replace` | 文件夹和 Octopus 里同名证书不是一个域名，核对后决定是否 `--force-replace` |
-| `连接 ... 失败` | 网络 / VPN，或 `OCTOPUS_URL` 错 |
+| 现象                                   | 原因 / 处理                                                               |
+| -------------------------------------- | ------------------------------------------------------------------------- |
+| `目录不存在: xxx（当前目录下有: ...）` | 目录名打错，按提示改                                                      |
+| `缺少 OCTOPUS_API_KEY`                 | `.env` 没配，或 `--env-file` 指错文件                                     |
+| files 列"软链接失效"                   | 从 certbot 只拷了 `live/`，重新 `cp -rL`                                  |
+| pfx_pw `WRONG`                         | `.env` 的 `PFX_PASSWORD` 和这张 pfx 不一致                                |
+| pfx_pw `ok(legacy)`                    | 正常，老式加密，脚本已兼容                                                |
+| `域名不一致 ... 已拒绝 replace`        | 文件夹和 Octopus 里同名证书不是一个域名，核对后决定是否 `--force-replace` |
+| `连接 ... 失败`                        | 网络 / VPN，或 `OCTOPUS_URL` 错                                           |
