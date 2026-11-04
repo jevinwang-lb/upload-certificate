@@ -126,11 +126,13 @@ class Octopus:
         return self._req("POST", f"/api/{self.space}/certificates", payload)
 
     def replace_certificate(self, cert_id, b64, password):
-        return self._req(
+        # /replace 返回的是被归档的旧证书（Id 带 -r- 后缀），新证书沿用原 Id，要再 GET 一次
+        self._req(
             "POST",
             f"/api/{self.space}/certificates/{cert_id}/replace",
             {"CertificateData": b64, "Password": password or ""},
         )
+        return self._req("GET", f"/api/{self.space}/certificates/{cert_id}")
 
 
 # ---------------------------------------------------------------- helpers
